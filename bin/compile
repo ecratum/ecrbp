@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o pipefail
+
+BUILD_DIR=$1
+CACHE_DIR=$2
+ENV_DIR=$3
+
+export NPM_CONFIG_LOGLEVEL=error
+export NODE_MODULES_CACHE=true
+export NODE_ENV=production
+export NODE_VERBOSE=false
+export PATH="$BUILD_DIR/.heroku/node/bin:$BUILD_DIR/.heroku/yarn/bin":$PATH
+
+install_nodejs() {
+  local code
+
+  local version="10.16.3"
+  local dir="$BUILD_DIR/.heroku/node"
+  local os=$(uname | tr '[:upper:]' '[:lower:]')
+  local cpu=$([[ "$(uname -p)" = "i686" ]] && echo "x86" || echo "x64")
+  local url="https://s3.amazonaws.com/heroku-nodebin/node/release/$os-$cpu/node-v$version-$os-$cpu.tar.gz"
+
+  echo "Downloading and installing node..."
+  code=$(curl "$url" -L --silent --fail --retry 5 --retry-max-time 15 -o /tmp/node.tar.gz --write-out "%{http_code}")
+  if [ "$code" != "200" ]; then
+    echo "Unable to download node: $code"
+  fi
+
+  rm -rf "$dir"
+  mkdir -p "$dir"
+
+  tar xzf /tmp/node.tar.gz -C "$dir" --strip 1
+  chmod +x "$dir"/bin/*
+  echo "Installed node $(node --version)"
+}
+
+install_yarn() {
+  local code
+
+  local version="1.19.1"
+  local dir="$BUILD_DIR/.heroku/yarn"
+  local url="https://s3.amazonaws.com/heroku-nodebin/yarn/release/yarn-v$version.tar.gz"
+
+  echo "Downloading and installing yarn..."
+  code=$(curl "$url" -L --silent --fail --retry 5 --retry-max-time 15 -o /tmp/yarn.tar.gz --write-out "%{http_code}")
+  if [ "$code" != "200" ]; then
+    echo "Unable to download yarn: $code" && false
+  fi
+
+  rm -rf "$dir"
+  mkdir -p "$dir"
+
+  tar xzf /tmp/yarn.tar.gz -C "$dir" --strip 1
+  chmod +x "$dir"/bin/*
+  echo "Installed yarn $(yarn --version)"
+}
+
+export_env_dir() {
+  local env_dir="$ENV_DIR"
+
+  if [ -d "$env_dir" ]; then
+    local whitelist_regex=${2:-''}
+    local blacklist_regex=${3:-'^(PATH|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH|LANG|BUILD_DIR)$'}
+    # shellcheck disable=SC2164
+    pushd "$env_dir" >/dev/null
+    for e in *; do
+      [ -e "$e" ] || continue
+      echo "$e" | grep -E "$whitelist_regex" | grep -qvE "$blacklist_regex" &&
+      export "$e=$(cat "$e")"
+      :
+    done
+    # shellcheck disable=SC2164
+    popd >/dev/null
+  fi
+}
+
+install_nodejs
+install_yarn
+export_env_dir
+
+cd "$BUILD_DIR"
+
+source .buildpack

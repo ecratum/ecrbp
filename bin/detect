@@ -1,0 +1,3 @@
+[[ ! -f "$1/.buildpack" ]] && exit 1
+
+echo "Running"
